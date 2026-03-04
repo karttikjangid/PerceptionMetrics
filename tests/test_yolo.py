@@ -90,7 +90,7 @@ def _make_patched_build_dataset(yaml_content, label_files_by_split):
 
 
 def test_build_dataset(caplog):
-    """Regression tests for build_dataset covering missing/null splits and happy paths.
+    """Regression tests for build_dataset and split validation.
 
     Verifies that:
     - No TypeError is raised when 'test' key is absent from the YAML.
@@ -98,6 +98,7 @@ def test_build_dataset(caplog):
     - A logging.WARNING is emitted for each missing or null split.
     - All three splits are loaded correctly when all paths are defined.
     - The ontology is built correctly from the YAML 'names' dict.
+    - _validate_splits raises ValueError for absent splits and passes for present ones.
 
     :param caplog: pytest log capture fixture
     :type caplog: pytest.LogCaptureFixture
@@ -160,17 +161,7 @@ def test_build_dataset(caplog):
     assert ontology["cat"]["idx"] == 0
     assert ontology["dog"]["idx"] == 1
 
-
-def test_validate_splits_raises_for_missing_split():
-    """_validate_splits must raise ValueError when a requested split is absent.
-
-    Regression test for the silent evaluation failure where filtering on a
-    missing split returned an empty DataFrame and produced NaN/0.0 metrics
-    without any error or warning.
-
-    :raises AssertionError: If ValueError is not raised for a missing split,
-        or if ValueError is raised for a split that is present
-    """
+    # --- _validate_splits: absent split must raise a descriptive ValueError ---
     from perceptionmetrics.datasets.perception import PerceptionDataset
 
     class _StubDataset(PerceptionDataset):
@@ -191,11 +182,9 @@ def test_validate_splits_raises_for_missing_split():
         ontology={},
     )
 
-    # present splits must not raise
     stub._validate_splits(["train"])
     stub._validate_splits(["val"])
     stub._validate_splits(["train", "val"])
 
-    # absent split must raise a descriptive ValueError
     with pytest.raises(ValueError, match="test"):
         stub._validate_splits(["test"])
