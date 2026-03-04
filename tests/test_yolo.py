@@ -159,3 +159,43 @@ def test_build_dataset(caplog):
     assert "cat" in ontology and "dog" in ontology
     assert ontology["cat"]["idx"] == 0
     assert ontology["dog"]["idx"] == 1
+
+
+def test_validate_splits_raises_for_missing_split():
+    """_validate_splits must raise ValueError when a requested split is absent.
+
+    Regression test for the silent evaluation failure where filtering on a
+    missing split returned an empty DataFrame and produced NaN/0.0 metrics
+    without any error or warning.
+
+    :raises AssertionError: If ValueError is not raised for a missing split,
+        or if ValueError is raised for a split that is present
+    """
+    from perceptionmetrics.datasets.perception import PerceptionDataset
+
+    class _StubDataset(PerceptionDataset):
+        def make_fname_global(self):
+            pass
+
+        def read_annotation(self, fname):
+            pass
+
+    stub = _StubDataset(
+        dataset=pd.DataFrame(
+            [
+                {"image": "img1.jpg", "annotation": "lbl1.txt", "split": "train"},
+                {"image": "img2.jpg", "annotation": "lbl2.txt", "split": "val"},
+            ]
+        ),
+        dataset_dir="/fake",
+        ontology={},
+    )
+
+    # present splits must not raise
+    stub._validate_splits(["train"])
+    stub._validate_splits(["val"])
+    stub._validate_splits(["train", "val"])
+
+    # absent split must raise a descriptive ValueError
+    with pytest.raises(ValueError, match="test"):
+        stub._validate_splits(["test"])
