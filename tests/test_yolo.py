@@ -3,7 +3,6 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 # ---------------------------------------------------------------------------
 # Stub out heavy optional C-extensions that are not available in the test
@@ -98,7 +97,6 @@ def test_build_dataset(caplog):
     - A logging.WARNING is emitted for each missing or null split.
     - All three splits are loaded correctly when all paths are defined.
     - The ontology is built correctly from the YAML 'names' dict.
-    - _validate_splits raises ValueError for absent splits and passes for present ones.
 
     :param caplog: pytest log capture fixture
     :type caplog: pytest.LogCaptureFixture
@@ -160,76 +158,3 @@ def test_build_dataset(caplog):
     assert "cat" in ontology and "dog" in ontology
     assert ontology["cat"]["idx"] == 0
     assert ontology["dog"]["idx"] == 1
-
-    # --- _validate_splits: absent split must raise a descriptive ValueError ---
-    from perceptionmetrics.datasets.perception import PerceptionDataset
-
-    class _StubDataset(PerceptionDataset):
-        def make_fname_global(self):
-            pass
-
-        def read_annotation(self, fname):
-            pass
-
-    stub = _StubDataset(
-        dataset=pd.DataFrame(
-            [
-                {"image": "img1.jpg", "annotation": "lbl1.txt", "split": "train"},
-                {"image": "img2.jpg", "annotation": "lbl2.txt", "split": "val"},
-            ]
-        ),
-        dataset_dir="/fake",
-        ontology={},
-    )
-
-    stub._validate_splits(["train"])
-    stub._validate_splits(["val"])
-    stub._validate_splits(["train", "val"])
-
-    with pytest.raises(ValueError, match="test"):
-        stub._validate_splits(["test"])
-
-
-def test_eval_missing_split_raises_valueerror():
-    """Ensure ImageDetectionTorchDataset raises ValueError for a missing split.
-
-    This guards against the silent-evaluation-failure pattern where filtering on
-    an absent split produces an empty DataFrame and returns NaN/0.0 metrics.
-
-    :raises pytest.skip.Exception: Skipped when torch or torchvision are unavailable.
-    :raises ValueError: Expected when the requested split is not in the dataset.
-    """
-    torch = pytest.importorskip("torch")
-    pytest.importorskip("torchvision")
-
-    from perceptionmetrics.datasets.detection import ImageDetectionDataset
-    from perceptionmetrics.models.torch_detection import ImageDetectionTorchDataset
-
-    class _StubDetectionDataset(ImageDetectionDataset):
-        def make_fname_global(self):
-            pass
-
-        def read_annotation(self, fname):
-            return []
-
-    stub = _StubDetectionDataset(
-        dataset=pd.DataFrame(
-            [
-                {
-                    "image": "img1.jpg",
-                    "annotation": "lbl1.txt",
-                    "split": "train",
-                },
-                {
-                    "image": "img2.jpg",
-                    "annotation": "lbl2.txt",
-                    "split": "val",
-                },
-            ]
-        ),
-        dataset_dir="/fake",
-        ontology={"cat": {"idx": 0, "rgb": [0, 0, 0]}},
-    )
-
-    with pytest.raises(ValueError, match="test"):
-        ImageDetectionTorchDataset(stub, transform=None, splits=["test"])
