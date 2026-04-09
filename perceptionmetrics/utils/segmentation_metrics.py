@@ -41,9 +41,36 @@ class SegmentationMetricsFactory:
         :param valid_mask: Binary mask where False elements will be igonred, defaults to None
         :type valid_mask: Optional[np.ndarray], optional
         """
-        assert pred.shape == gt.shape, "Prediction and GT shapes don't match"
-        assert np.issubdtype(pred.dtype, np.integer), "Prediction should be integer"
-        assert np.issubdtype(gt.dtype, np.integer), "GT should be integer"
+        if pred.shape != gt.shape:
+            raise ValueError(
+                "Prediction and GT shapes don't match: "
+                f"pred.shape={pred.shape}, gt.shape={gt.shape}"
+            )
+        if not np.issubdtype(pred.dtype, np.integer):
+            raise TypeError(f"Prediction should be integer, got dtype={pred.dtype}")
+        if not np.issubdtype(gt.dtype, np.integer):
+            raise TypeError(f"GT should be integer, got dtype={gt.dtype}")
+
+        if valid_mask is not None:
+            if not isinstance(valid_mask, np.ndarray):
+                raise TypeError(
+                    "valid_mask should be a numpy.ndarray when provided, "
+                    f"got type={type(valid_mask).__name__}"
+                )
+            if valid_mask.shape != gt.shape:
+                raise ValueError(
+                    "valid_mask shape does not match GT shape: "
+                    f"valid_mask.shape={valid_mask.shape}, gt.shape={gt.shape}"
+                )
+            if not (
+                np.issubdtype(valid_mask.dtype, np.bool_)
+                or np.issubdtype(valid_mask.dtype, np.integer)
+            ):
+                raise TypeError(
+                    "valid_mask should have a boolean/integer dtype, "
+                    f"got dtype={valid_mask.dtype}"
+                )
+            valid_mask = valid_mask.astype(bool, copy=False)
 
         # Build mask of valid elements
         mask = (gt >= 0) & (gt < self.n_classes)
@@ -118,6 +145,30 @@ class SegmentationMetricsFactory:
         tn = total - (self.get_tp() + self.get_fp() + self.get_fn())
         return tn if per_class else int(np.nansum(tn))
 
+    @staticmethod
+    def _safe_div(
+        numerator: Union[np.ndarray, float, int],
+        denominator: Union[np.ndarray, float, int],
+    ) -> Union[np.ndarray, float]:
+        """Safely divide and return NaN for zero/invalid denominators."""
+        if np.isscalar(denominator):
+            scalar_denominator = float(np.asarray(denominator, dtype=np.float64))
+            if scalar_denominator <= 0:
+                return math.nan
+            scalar_numerator = float(np.asarray(numerator, dtype=np.float64))
+            return scalar_numerator / scalar_denominator
+
+        numerator_arr = np.asarray(numerator, dtype=np.float64)
+        denominator_arr = np.asarray(denominator, dtype=np.float64)
+        result = np.full_like(denominator_arr, np.nan, dtype=np.float64)
+        np.divide(
+            numerator_arr,
+            denominator_arr,
+            out=result,
+            where=denominator_arr > 0,
+        )
+        return result
+
     def get_precision(self, per_class: bool = True) -> Union[np.ndarray, float]:
         """Precision = TP / (TP + FP)
 
@@ -129,11 +180,7 @@ class SegmentationMetricsFactory:
         tp = self.get_tp(per_class)
         fp = self.get_fp(per_class)
         denominator = tp + fp
-
-        if np.isscalar(denominator):
-            return float(tp / denominator) if denominator > 0 else math.nan
-        else:
-            return np.where(denominator > 0, tp / denominator, np.nan)
+        return self._safe_div(tp, denominator)
 
     def get_recall(self, per_class: bool = True) -> Union[np.ndarray, float]:
         """Recall = TP / (TP + FN)
@@ -146,11 +193,7 @@ class SegmentationMetricsFactory:
         tp = self.get_tp(per_class)
         fn = self.get_fn(per_class)
         denominator = tp + fn
-
-        if np.isscalar(denominator):
-            return float(tp / denominator) if denominator > 0 else math.nan
-        else:
-            return np.where(denominator > 0, tp / denominator, np.nan)
+        return self._safe_div(tp, denominator)
 
     def get_accuracy(self, per_class: bool = True) -> Union[np.ndarray, float]:
         """Accuracy = (TP + TN) / (TP + FP + FN + TN)
@@ -182,15 +225,8 @@ class SegmentationMetricsFactory:
         precision = self.get_precision(per_class)
         recall = self.get_recall(per_class)
         denominator = precision + recall
-
-        if np.isscalar(denominator):
-            return (
-                2 * (precision * recall) / denominator if denominator > 0 else math.nan
-            )
-        else:
-            return np.where(
-                denominator > 0, 2 * (precision * recall) / denominator, np.nan
-            )
+        numerator = 2 * (precision * recall)
+        return self._safe_div(numerator, denominator)
 
     def get_iou(self, per_class: bool = True) -> Union[np.ndarray, float]:
         """IoU = TP / (TP + FP + FN)
@@ -204,11 +240,7 @@ class SegmentationMetricsFactory:
         fp = self.get_fp(per_class)
         fn = self.get_fn(per_class)
         union = tp + fp + fn
-
-        if np.isscalar(union):
-            return float(tp / union) if union > 0 else math.nan
-        else:
-            return np.where(union > 0, tp / union, np.nan)
+        return self._safe_div(tp, union)
 
     def get_averaged_metric(
         self, metric_name: str, method: str, weights: Optional[np.ndarray] = None
@@ -230,10 +262,29 @@ class SegmentationMetricsFactory:
         if method == "micro":
             return float(metric(per_class=False))
         if method == "weighted":
-            assert (
-                weights is not None
-            ), "Weights should be provided for weighted averaging"
-            return float(np.nansum(metric(per_class=True) * weights))
+            if weights is None:
+                raise ValueError("Weights should be provided for weighted averaging")
+
+            metric_values = np.asarray(metric(per_class=True), dtype=np.float64)
+            weights_array = np.asarray(weights, dtype=np.float64)
+
+            if weights_array.shape != metric_values.shape:
+                raise ValueError(
+                    "Weights shape does not match number of classes: "
+                    f"weights.shape={weights_array.shape}, expected={metric_values.shape}"
+                )
+            if not np.all(np.isfinite(weights_array)):
+                raise ValueError("Weights should contain finite values")
+
+            valid_metric_mask = np.isfinite(metric_values)
+            valid_weight_sum = float(np.sum(weights_array[valid_metric_mask]))
+            if valid_weight_sum <= 0:
+                return math.nan
+
+            weighted_sum = float(
+                np.sum(metric_values[valid_metric_mask] * weights_array[valid_metric_mask])
+            )
+            return weighted_sum / valid_weight_sum
         raise ValueError(f"Unknown method {method}")
 
     def get_metric_per_name(

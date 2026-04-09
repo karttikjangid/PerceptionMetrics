@@ -6,6 +6,20 @@ from typing import Tuple, List, Optional
 from perceptionmetrics.datasets.detection import ImageDetectionDataset
 
 
+def _validate_coco_paths(annotation_file: str, image_dir: str):
+    if not os.path.exists(annotation_file):
+        raise FileNotFoundError(f"Annotation file not found: {annotation_file}")
+    if not os.path.isfile(annotation_file):
+        raise FileNotFoundError(
+            f"Annotation path is not a file: {annotation_file}"
+        )
+
+    if not os.path.exists(image_dir):
+        raise FileNotFoundError(f"Image directory not found: {image_dir}")
+    if not os.path.isdir(image_dir):
+        raise NotADirectoryError(f"Image directory is not a directory: {image_dir}")
+
+
 def build_coco_dataset(
     annotation_file: str,
     image_dir: str,
@@ -26,10 +40,7 @@ def build_coco_dataset(
     :rtype: Tuple[pd.DataFrame, dict]
     """
     # Check that provided paths exist
-    assert os.path.isfile(
-        annotation_file
-    ), f"Annotation file not found: {annotation_file}"
-    assert os.path.isdir(image_dir), f"Image directory not found: {image_dir}"
+    _validate_coco_paths(annotation_file, image_dir)
 
     # Load COCO annotations (reuse if provided)
     if coco_obj is None:
@@ -77,6 +88,8 @@ class CocoDataset(ImageDetectionDataset):
     """
 
     def __init__(self, annotation_file: str, image_dir: str, split: str = "train"):
+        _validate_coco_paths(annotation_file, image_dir)
+
         # Load COCO object once - this loads all annotations into memory with efficient indexing
         self.coco = COCO(annotation_file)
         self.image_dir = image_dir

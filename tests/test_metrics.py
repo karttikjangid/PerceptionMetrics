@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import pytest
 from perceptionmetrics.utils.segmentation_metrics import SegmentationMetricsFactory
@@ -91,7 +92,7 @@ def test_edge_cases(metrics_factory):
     pred = np.array([])
     gt = np.array([])
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(TypeError):
         metrics_factory.update(pred, gt)
 
     empty_metrics_factory = SegmentationMetricsFactory(n_classes=3)
@@ -120,3 +121,40 @@ def test_macro_micro_weighted(metrics_factory):
     assert 0 <= macro_f1 <= 1
     assert 0 <= micro_f1 <= 1
     assert 0 <= weighted_f1 <= 1
+
+
+def test_macro_iou_ignores_missing_class(metrics_factory):
+    pred = np.array([0, 1, 1, 1])
+    gt = np.array([0, 1, 0, 1])
+
+    metrics_factory.update(pred, gt)
+
+    iou_per_class = metrics_factory.get_iou(per_class=True)
+    macro_iou = metrics_factory.get_averaged_metric("iou", method="macro")
+
+    assert np.isnan(iou_per_class[2])
+
+    expected_macro_iou = float(np.mean([iou_per_class[0], iou_per_class[1]]))
+    assert np.isclose(macro_iou, expected_macro_iou)
+
+
+def test_weighted_iou_renormalizes_over_valid_classes(metrics_factory):
+    pred = np.array([0, 1, 1, 1])
+    gt = np.array([0, 1, 0, 1])
+
+    metrics_factory.update(pred, gt)
+
+    iou_per_class = metrics_factory.get_iou(per_class=True)
+    weights = np.array([0.2, 0.3, 0.5])
+    weighted_iou = metrics_factory.get_averaged_metric(
+        "iou", method="weighted", weights=weights
+    )
+
+    valid_mask = np.isfinite(iou_per_class)
+    expected_weighted_iou = float(
+        np.sum(iou_per_class[valid_mask] * weights[valid_mask])
+        / np.sum(weights[valid_mask])
+    )
+
+    assert np.isnan(iou_per_class[2])
+    assert np.isclose(weighted_iou, expected_weighted_iou)
