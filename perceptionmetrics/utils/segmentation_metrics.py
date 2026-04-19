@@ -1,5 +1,6 @@
 from collections import defaultdict
 import math
+import warnings
 from typing import List, Optional, Union
 
 import numpy as np
@@ -255,7 +256,15 @@ class SegmentationMetricsFactory:
         """
         metric = getattr(self, f"get_{metric_name}")
         if method == "macro":
-            return float(np.nanmean(metric(per_class=True)))
+            per_class_values = metric(per_class=True)
+            nan_mask = np.isnan(per_class_values)
+            missing_count = int(np.sum(nan_mask))
+            if missing_count > 0:
+                warnings.warn(
+                    f"Warning: {missing_count} class(es) were missing from the confusion matrix. Their {metric_name.upper()} evaluated to NaN and will be ignored in the macro-average.",
+                    UserWarning,
+                )
+            return float(np.nanmean(per_class_values))
         if method == "micro":
             return float(metric(per_class=False))
         if method == "weighted":
